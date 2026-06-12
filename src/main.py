@@ -2,17 +2,85 @@ import json
 import typer
 import pandas as pd
 from rich import print
-
+from pathlib import Path
+from src.db import init_db
 from src.db import get_connection, init_db
 from src.models import RawAccount
 from src.normalize import normalize_account_name
+import shutil
 
 app = typer.Typer()
+DB_PATH = Path("data/inventory.db")
+EXPORTS_PATH = Path("data/exports")
 
 @app.command()
 def init():
     init_db()
     print("[green]Initialized local inventory database.[/green]")
+
+
+@app.command()
+def reset_db(
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Skip confirmation.",
+    )
+):
+    """
+    Delete the local inventory database and recreate it empty.
+    """
+
+    if not yes:
+        confirmed = typer.confirm(
+            "This will delete data/inventory.db and all stored inventory data. Continue?"
+        )
+
+        if not confirmed:
+            print("[yellow]Reset cancelled.[/yellow]")
+            raise typer.Exit()
+
+    if DB_PATH.exists():
+        DB_PATH.unlink()
+        print("[green]Deleted existing inventory database.[/green]")
+    else:
+        print("[yellow]No existing inventory database found.[/yellow]")
+
+    init_db()
+
+    print("[green]Created a fresh empty inventory database.[/green]")
+
+
+@app.command()
+def clean_exports(
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Skip confirmation.",
+    )
+):
+    """
+    Delete generated export files.
+    """
+
+    if not yes:
+        confirmed = typer.confirm(
+            "This will delete all files inside data/exports. Continue?"
+        )
+
+        if not confirmed:
+            print("[yellow]Clean cancelled.[/yellow]")
+            raise typer.Exit()
+
+    if EXPORTS_PATH.exists():
+        shutil.rmtree(EXPORTS_PATH)
+        print("[green]Deleted export files.[/green]")
+
+    EXPORTS_PATH.mkdir(parents=True, exist_ok=True)
+    print("[green]Created empty exports folder.[/green]")
+
 
 def upsert_accounts(accounts: list[RawAccount]) -> None:
     conn = get_connection()
@@ -142,12 +210,22 @@ def sync_ad():
 
 @app.command()
 def sync_entra():
-    from src.connectors.entra import fetch_entra_service_principals
+    from src.connectors.entra import fetch_entra_app_identities
 
-    accounts = fetch_entra_service_principals()
+    accounts = fetch_entra_app_identities()
     upsert_accounts(accounts)
 
     print(f"[green]Synced {len(accounts)} Entra service principals.[/green]")
+
+
+@app.command()
+def sync_entra_users():
+    from src.connectors.entra import fetch_entra_users_of_interest
+
+    accounts = fetch_entra_users_of_interest()
+    upsert_accounts(accounts)
+
+    print(f"[green]Synced {len(accounts)} Entra users of interest.[/green]")
 
 
 @app.command()
